@@ -1,0 +1,60 @@
+# =============================================================
+#  Git ignore — UIDE Aprendizaje Profundo
+# =============================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python — entornos virtuales y caches
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Datasets pesados — se descargan aparte (Kaggle, etc.)
+semana-2/data/
+semana-3/data/
+*.h5
+*.hdf5
+
+# Modelos entrenados (regenerables desde los notebooks)
+*.keras
+*.tflite
+*.onnx
+*.pb
+
+# Pesos sueltos
+outputs/model_*.keras
+outputs/checkpoints/
+
+# LaTeX — intermedios de compilación
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.run.xml
+*.bcf
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Otros
+*.tmp
+*.bak
