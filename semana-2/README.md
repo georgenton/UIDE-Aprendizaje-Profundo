@@ -5,7 +5,6 @@
 **Maestría:** Inteligencia Artificial Aplicada (MIA-B) — UIDE
 **Profesor:** J. Rodriguez Chivata
 **Grupo 5 — Integrantes:** J. Quizamánchuro Fuel, G. Calahorrano Guayasamin, D. Perez Cedillo
-**Responsable de la entrega técnica:** Jorge Quizamánchuro Fuel
 
 ---
 
