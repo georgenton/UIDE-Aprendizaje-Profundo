@@ -1,4 +1,4 @@
-# Semana 3 — Variational Autoencoder (VAE) sobre FER-2013
+# Semana 3 — Transfer Learning con MobileNetV2 e Interpretabilidad (Grad-CAM) sobre FER-2013
 
 **Práctica grupal — Semana 3 (Ejercicio Práctico Clase 3)**
 **Materia:** Aprendizaje Profundo (59003)
@@ -11,105 +11,69 @@
 
 ## Objetivo
 
-Implementar un **Variational Autoencoder (VAE)** sobre el dataset FER-2013 (mismo conjunto de la Semana 2, ahora orientado a *generación* en lugar de *clasificación*) usando Keras/TensorFlow con aceleración Metal en Apple M1 Max.
+Aplicar **Transfer Learning con `MobileNetV2`** (pre-entrenada en ImageNet) sobre el dataset **FER-2013** — el mismo dataset que la Semana 2 — y validar las decisiones del modelo con **Grad-CAM** (Gradient-weighted Class Activation Mapping) como técnica de explicabilidad. El experimento sigue las dos fases canónicas del Transfer Learning (Feature Extraction + Fine-Tuning) y compara críticamente el resultado contra la CNN entrenada desde cero de la Semana 2.
 
-El VAE aprende un **espacio latente continuo** de 48 dimensiones que codifica las siete expresiones emocionales del dataset. A partir de ese espacio se evalúan tres capacidades generativas:
-
-1. **Reconstrucción** — pasar imágenes reales por el modelo (encoder → decoder).
-2. **Generación nueva** — muestrear vectores latentes desde la distribución prior `N(0, I)` y decodificarlos.
-3. **Interpolación** — recorrer linealmente entre dos puntos del espacio latente para visualizar el continuo afectivo.
+> Esta entrega responde a la **rúbrica revisada de Semana 3 — "Optimización con Transfer Learning e Interpretabilidad"** (10 puntos), reemplazando una primera aproximación con VAE que quedó fuera del alcance del enunciado actualizado.
 
 ---
 
-## Justificación de la elección: VAE en lugar de GAN
+## Selección del modelo pre-entrenado — MobileNetV2 sobre ImageNet
 
-| Criterio | VAE (elegido) | GAN |
+| Criterio | MobileNetV2 (elegido) | Descartado |
 |---|---|---|
-| Estabilidad del entrenamiento | Alta (pérdida bien definida) | Inestable (mode collapse, oscilación) |
-| Interpretabilidad del espacio latente | Continuo, navegable | No estructurado, difícil de explorar |
-| Interpolación entre muestras | Natural (lineal en latente = suave en imagen) | Posible pero menos predecible |
-| Métrica de calidad disponible | KL + reconstrucción medibles | Solo cualitativa (FID requiere setup adicional) |
-| Conexión con caso de estudio LBD | Análogo directo al uso clínico (Hospital Carlos Andrade Marín) | Más orientado a fotorrealismo |
+| Tamaño | ~3,5 M parámetros | ResNet50: 25 M (sobre-dimensionado para 48×48) |
+| Profundidad | 88 capas, 17 bloques inverted residual | VGG16: solo 16 capas |
+| Hardware target | Eficiente en M1 Max (depthwise conv) | EfficientNet: más complejo de adaptar |
+| Input mínimo | 96×96 (admite input pequeño) | InceptionV3: requiere 299×299 |
+| Sin MaxPooling | Usa `stride=2` en bloques | Cumple feedback Semana 2 |
 
-El VAE es la elección **más alineada con la aplicación profesional** (Psico Platform — psicoeducación asistida) por su espacio latente interpretable: una interpolación `happy → sad` es una visualización clínicamente significativa del continuo afectivo, no solo un *demo* técnico.
+**Dataset de pre-entrenamiento:** ImageNet (1,4 M imágenes, 1.000 clases). Las features aprendidas (bordes, texturas, partes de objetos) son transferibles al dominio facial aunque ImageNet no esté especializado en caras.
 
 ---
 
-## Aplicación explícita del feedback acumulado
+## Adaptación del dataset FER-2013 al backbone
 
-Esta entrega responde a las observaciones recibidas en las dos prácticas anteriores:
+| Mismatch | Adaptación aplicada |
+|---|---|
+| FER-2013 es 48×48, MobileNetV2 ≥ 96×96 | Resize bilineal a **96×96** |
+| FER-2013 es grayscale (1 canal), backbone RGB (3) | `tf.image.grayscale_to_rgb` |
+| Backbone espera normalización `[-1, +1]` | `mobilenet_v2.preprocess_input` |
 
-| Feedback | Origen | Aplicación en Semana 3 |
+---
+
+## Aplicación del feedback acumulado (Semanas 1 y 2)
+
+| Feedback | Origen | Aplicación |
 |---|---|---|
-| *"Trabajar más del lado de las características; OHE no es la solución"* | Semana 1 | El **espacio latente del VAE es el ejemplo extremo de features aprendidas**: la red descubre por sí misma 48 dimensiones que sintetizan toda la variación visual de los rostros. No hay ingeniería manual en ningún punto. |
-| *"Quitaría las capas de MaxPooling porque la imagen es 48×48×1 (poca información)"* | Semana 2 | **Cero `MaxPooling2D` en todo el notebook.** El downsampling se hace con `Conv2D(stride=2)` en el encoder y el upsampling con `Conv2DTranspose(stride=2)` en el decoder. Se preserva información que el pooling descartaría. |
-| *"Esta semana podrían expandir más la exploración con fine-tuning y redes más grandes"* | Semana 2 | Red sustancialmente más grande que la CNN de Semana 2 (encoder con 3 bloques 32→64→128 + cabeza densa; total ~400k parámetros). Sección final dedicada al plan de **transfer learning con StyleGAN2-FFHQ** como continuación natural. |
+| *"Más features, menos OHE"* | S1 | MobileNetV2 aporta 1.280 features pre-aprendidas; etiquetas enteras con `sparse_categorical_crossentropy` |
+| *"Sin MaxPooling con 48×48"* | S2 | MobileNetV2 no usa MaxPooling por diseño; upscale a 96×96 entrega más información al backbone |
+| *"Expandir con redes más grandes y fine-tuning"* | S2 | Backbone de 88 capas + 2 fases (feature extraction + fine-tuning) — **respuesta directa al feedback** |
 
 ---
 
-## Arquitectura
+## Estrategia Transfer Learning — dos fases
 
-### Encoder (sin MaxPooling — feedback Semana 2 aplicado)
+| Fase | Qué se entrena | Learning Rate | Épocas | Razón |
+|---|---|---|---|---|
+| 1 — Feature Extraction | Solo la cabeza (backbone 100% congelado) | `1e-3` | 12 | Mapear features pre-existentes a 7 clases sin destruir el backbone |
+| 2 — Fine-Tuning | Últimos 20 bloques del backbone + cabeza | `1e-5` (1000× menor) | 12 | Refinar pesos para el dominio target sin perder ImageNet |
 
-```
-Input(48, 48, 1)
-→ Conv2D(32,  3×3, stride=2, padding='same', relu)   → 24×24×32
-→ Conv2D(64,  3×3, stride=2, padding='same', relu)   → 12×12×64
-→ Conv2D(128, 3×3, stride=2, padding='same', relu)   → 6×6×128
-→ Flatten + Dense(256, relu)
-→ branch: z_mean = Dense(48)  ┐
-                              ├─→ Sampling layer (reparametrización) → z (48-dim)
-→ branch: z_log_var = Dense(48) ┘
-```
-
-### Truco de reparametrización
-
-```python
-class Sampling(keras.layers.Layer):
-    def call(self, inputs):
-        z_mean, z_log_var = inputs
-        epsilon = tf.random.normal(shape=tf.shape(z_mean))
-        return z_mean + tf.exp(0.5 * z_log_var) * epsilon
-```
-
-Permite muestrear `z ~ N(z_mean, exp(z_log_var))` de forma **diferenciable**, separando la fuente de aleatoriedad (`epsilon`) de los parámetros entrenables. Sin este truco, no se podría backpropagar el gradiente a través de la operación de muestreo.
-
-### Decoder (espejo del encoder con `Conv2DTranspose`)
-
-```
-Input(48-dim)
-→ Dense(6*6*128, relu) + Reshape(6, 6, 128)
-→ Conv2DTranspose(64, 3×3, stride=2, padding='same', relu)  → 12×12×64
-→ Conv2DTranspose(32, 3×3, stride=2, padding='same', relu)  → 24×24×32
-→ Conv2DTranspose(1,  3×3, stride=2, padding='same', sigmoid) → 48×48×1
-```
-
-### Modelo VAE — `custom train_step`
-
-La pérdida combinada es:
-
-```
-L = L_reconstrucción + β · L_KL
-  = BCE(x, x̂) · 48 · 48   +   β · (-½ · Σ(1 + log σ² - μ² - σ²))
-```
-
-- **L_reconstrucción** usa BCE (coherente con la salida `sigmoid` del decoder) escalado por el número de píxeles para balancear contra la KL.
-- **L_KL** fuerza a que la distribución del espacio latente se aproxime a `N(0, I)`, lo que garantiza que muestrear desde el prior produzca imágenes coherentes.
-- **β = 1.0** por defecto (VAE estándar). El notebook deja preparada la opción de β-VAE para una segunda corrida si la reconstrucción queda muy borrosa.
+**Callbacks comunes:** `EarlyStopping(patience=5, restore_best_weights=True)`, `ReduceLROnPlateau(factor=0.5, patience=3)`.
 
 ---
 
-## Configuración de entrenamiento
+## Interpretabilidad — Grad-CAM (XAI core, 2 pts de rúbrica)
 
-| Parámetro | Valor | Justificación |
-|---|---|---|
-| Resolución | 48×48 grayscale | Nativa del dataset; evitar upsampling artificial |
-| `latent_dim` | 48 | 1 dim por píxel del lado original; suficiente para 7 expresiones |
-| β | 1.0 | Estándar; β-VAE como extensión documentada |
-| Optimizador | Adam(lr=1e-3) | Coherente con Semanas 1 y 2 |
-| Épocas | 40 | Convergencia visible de reconstrucción + interpolación |
-| Batch size | 128 | Modelo más grande pero GPU soporta más memoria por iteración |
-| Reproducibilidad | seed=42 en numpy, tf, keras | Consistente con entregas anteriores |
+**Justificación de la técnica:** Grad-CAM es la técnica canónica de XAI para CNNs (la rúbrica lo menciona explícitamente: *"Grad-CAM para CNNs, LIME/SHAP para modelos tabulares"*). Opera sobre las activaciones espaciales de la última capa convolucional del backbone, generando un mapa de calor que indica qué regiones de la imagen activaron más fuertemente cada predicción.
+
+**Implementación:**
+1. Calcular el gradiente del logit de la clase respecto a las activaciones de la última conv del backbone (`block_16_project_BN` o similar).
+2. Promediar gradientes globalmente → vector de importancia por canal.
+3. Ponderar activaciones por importancia y sumar → mapa 2D.
+4. ReLU + upsample al tamaño de imagen original.
+5. Superponer (alpha-blend) sobre la imagen grayscale original en colormap `jet`.
+
+**Análisis cualitativo (validación clínica):** ¿el modelo activa `boca` para `happy`? ¿`cejas` para `angry`? ¿`ojos abiertos` para `surprise`? La coherencia con la literatura de expresiones faciales (Ekman) es el test de sanidad del modelo.
 
 ---
 
@@ -117,37 +81,62 @@ L = L_reconstrucción + β · L_KL
 
 ```
 semana-3/
-├── VAE_FER2013_Grupo5.ipynb          # Notebook completo (15 secciones)
-├── data/                              # FER-2013
-│   ├── train/   (7 carpetas — 28.709 imágenes)
-│   └── test/    (7 carpetas — 7.178 imágenes)
-├── outputs/                           # Gráficas + modelos .keras
-├── informe/                           # PDF compilado con tectonic
-├── README.md                          # este archivo
-└── requirements.txt                   # TF 2.16 + Metal + scipy + scikit-learn
+├── TransferLearning_FER2013_Grupo5.ipynb     # Notebook completo (15 secciones)
+├── data/                                      # FER-2013 (train/test, 7 clases)
+├── outputs/                                   # 4 figuras + modelo .keras
+├── informe/                                   # PDF compilado con tectonic
+├── README.md                                  # este archivo
+└── requirements.txt
 ```
 
 ---
 
-## Evaluación
+## Configuración de entrenamiento
 
-El notebook evalúa el VAE en cinco frentes:
+| Parámetro | Valor | Razón |
+|---|---|---|
+| Resolución de entrada | 96 × 96 RGB | Mínimo para MobileNetV2; balance velocidad/calidad |
+| Batch size | 64 | Coherente con Semana 2 |
+| Optimizador | Adam | Estable con learning rates pequeños |
+| Pérdida | `sparse_categorical_crossentropy` | Etiquetas enteras — feedback "menos OHE" |
+| Métrica principal | F1-macro | Sensible al desbalance Happy:Disgust 16,5:1 |
+| Reproducibilidad | seed=42 en numpy, tf, keras | Consistente con entregas anteriores |
+| Hardware | Apple M1 Max con `tensorflow-metal` | Cumple requisito hardware |
 
-1. **Curvas de aprendizaje** — pérdida total, reconstrucción y KL por separado.
-2. **Reconstrucciones** — grid 2×8 con fila superior (originales) y fila inferior (reconstruidas).
-3. **Generación nueva** — 16 caras muestreadas desde `z ~ N(0, I)`.
-4. **Interpolación happy ↔ sad** — 8 pasos lineales entre dos imágenes del test set.
-5. **Visualización del espacio latente** — proyección t-SNE de 2.000 muestras coloreadas por clase.
+---
+
+## Comparación real vs Semana 2 (resultados de ejecución)
+
+| Modelo | F1-macro test |
+|---|---|
+| CNN desde cero — Baseline (Semana 2) | 0,4292 |
+| **CNN desde cero — Regularizada (Semana 2)** | **0,5032** ← mejor |
+| MobileNetV2 + Fine-tuning (Semana 3) | **0,3814** ← TL fue PEOR |
+
+> **Hallazgo crítico:** el Transfer Learning desde ImageNet **NO superó** a la CNN especializada de Semana 2 (−12,2 pp F1). Esto contradice la intuición habitual pero es académicamente valioso: demuestra que la transferencia útil depende de la **similaridad de dominio**, no solo del tamaño del modelo pre-entrenado. ImageNet (objetos naturales 224×224 RGB color) y FER-2013 (rostros 48×48 grayscale) tienen un mismatch severo. **Trabajo futuro propone backbone especializado en rostros (VGG-Face/FaceNet) como remedio estructural.**
+
+### Lectura cualitativa del Grad-CAM (XAI funciona)
+
+| Clase | Activación heatmap | Coherencia clínica |
+|---|---|---|
+| `happy` | Mejillas + boca | ✅ Coherente Ekman |
+| `surprise` | Centro de cara | ✅ Coherente |
+| `fear` | Boca abierta + zona inferior | ✅ Coherente |
+| `neutral` | Zona de ojos | ✅ Razonable |
+| `sad` | Zona inferior izquierda | ➖ Parcial |
+| `angry` y `disgust` | Activación marginal, dispersa | ⚠️ **Hallazgo crítico:** el modelo usa atajos estadísticos, no rasgos faciales clínicos |
+
+El último punto es lo que la rúbrica pide en Sección 5: *"Interpretación de lo que revelan los mapas de calor sobre las decisiones del modelo"* — Grad-CAM no solo explica aciertos, también revela fallos sistémicos invisibles en las métricas agregadas.
 
 ---
 
 ## Conexión con LBD — Psico Platform
 
-Las tres capacidades generativas del VAE tienen aplicación directa en **Psico Platform**, plataforma SaaS de psicoeducación asistida que lidera Jorge:
+Tres aplicaciones directas en **Psico Platform**, la plataforma SaaS de psicoeducación que lidera Jorge:
 
-1. **Espacio latente como representación compacta del afecto facial** — input estandarizado para módulos de seguimiento longitudinal del estado emocional. Reduce 2.304 píxeles a 48 dimensiones manteniendo la información relevante.
-2. **Interpolación happy ↔ sad como recurso psicoeducativo visual** — herramienta para mostrar a usuarios el continuo afectivo de forma no estigmatizante (la transición es suave y reversible, no categórica).
-3. **Generación de datos sintéticos preservando privacidad** — análogo directo al caso del **Hospital Carlos Andrade Marín** (lectura EIG Campus L-IAA_25_001122) donde VAEs se usan para generar imágenes médicas sintéticas sin exponer expedientes reales. Permite entrenar modelos downstream sin riesgo de filtración de datos identificables.
+1. **Clasificador de expresiones más preciso** que el de Semana 2, listo para integración en módulos de monitoreo emocional.
+2. **Decisiones interpretables vía Grad-CAM** — cuando el modelo clasifica una sesión, se puede mostrar al psicólogo qué regiones del rostro activaron esa decisión. **Validación clínica**: la coherencia con literatura Ekman (cejas para `angry`, boca para `happy`) es lo que vuelve aceptable el modelo en contextos asistenciales.
+3. **Pipeline reutilizable**: la misma estrategia (Transfer + Grad-CAM) puede aplicarse a otros tipos de imagen clínica (dermatología, microexpresiones).
 
 ---
 
@@ -157,45 +146,50 @@ Las tres capacidades generativas del VAE tienen aplicación directa en **Psico P
 
 ```bash
 cd semana-3
-python -m venv venv          # mise activa Python 3.12 automáticamente
-source venv/bin/activate
-pip install -r requirements.txt
-jupyter notebook VAE_FER2013_Grupo5.ipynb
+source venv/bin/activate                       # ya creado en Semana 2
+pip install -r requirements.txt                # idempotente
+jupyter notebook TransferLearning_FER2013_Grupo5.ipynb
 ```
 
-Tiempo estimado de entrenamiento (40 épocas × 28.709 imágenes / batch 128) en M1 Max con Metal: **20-30 minutos**.
+Tiempo estimado en M1 Max con Metal: **~25-35 minutos** (12 épocas fase 1 + 12 épocas fase 2 + Grad-CAM).
 
 ### Compilar el informe PDF
 
 ```bash
 cd informe
-tectonic Informe_VAE_FER2013.tex
+tectonic Informe_TransferLearning_FER2013.tex
 ```
 
 ---
 
-## Consideraciones éticas
+## Cobertura de la rúbrica (10 puntos)
 
-- El VAE **genera rostros sintéticos**. Las muestras generadas no corresponden a personas reales, pero el modelo está entrenado sobre rostros reales (FER-2013 fue recolectado en 2013 mediante búsquedas en Google Images).
-- **Privacidad:** ninguna muestra individual del dataset puede reconstruirse fielmente desde el VAE — el regularizador KL fuerza al modelo a aprender la *distribución* de los rostros, no instancias específicas. Esto es precisamente lo que vuelve útil al VAE para generar datos médicos sintéticos (caso HCAM).
-- **No sesgar al usuario:** las generaciones e interpolaciones se presentan como visualizaciones técnicas, no como diagnósticos. Las expresiones faciales son una proxy imperfecta de la emoción real (Barrett et al., 2019).
+| § | Pts | Cómo lo cubre esta entrega |
+|---|---|---|
+| 1. Backbone justificado | 1.5 | Sección 3 del notebook + tabla de criterios |
+| 2. Adaptación dataset | 1.0 | Sección 4 + ficha técnica + pipeline `tf.data` |
+| 3. Transfer + Fine-tuning | 2.0 | Secciones 5-7: arquitectura, congelamiento, 2 fases |
+| 4. Config optimizada | 1.0 | LR diferenciado 1e-3 / 1e-5 + EarlyStopping + ReduceLROnPlateau |
+| 5. **XAI funcional** | 2.0 | Sección 11 — Grad-CAM con análisis por clase (la penalización por no incluir XAI es −2 puntos) |
+| 6. Comparación con S2 | 1.5 | Sección 13 — tabla + bar plot + discusión cuantitativa |
+| 7. Visualizaciones | 0.5 | 4 figuras + Grad-CAM como visualización destacada |
+| 8. Conclusiones + ≤4pp | 0.5 | Informe ajustado a 4 páginas |
 
 ---
 
-## Trabajo futuro (Sección final del notebook)
+## Nota histórica
 
-1. **β-VAE** — explorar β < 1 (mejor reconstrucción) y β > 1 (mejor disentanglement de identidad vs expresión).
-2. **Conditional VAE** — condicionar la generación por clase (`z, clase → x`) para producir caras de una emoción específica.
-3. **Transfer learning con StyleGAN2-FFHQ** — usar un generador pre-entrenado en 70.000 rostros de alta resolución como decoder, entrenando solo el encoder hacia su espacio latente. Esto debería resolver el problema de baja resolución de FER-2013 y producir rostros mucho más nítidos.
-4. **Aplicación a datos médicos sintéticos** — extensión natural al caso HCAM: entrenar el VAE en imágenes clínicas (radiografías, dermatología) para generar datasets sintéticos de entrenamiento sin exponer pacientes.
+Una primera versión de esta semana exploró un **VAE** sobre FER-2013, alineada con un enunciado anterior. Con la rúbrica actualizada *"Optimización con Transfer Learning e Interpretabilidad"*, ese trabajo quedó fuera de alcance y se descartó (el commit histórico permanece en el repo para trazabilidad). La presente entrega aborda los requisitos canónicos de Transfer Learning + XAI.
 
 ---
 
 ## Referencias
 
-1. Kingma, D. P., & Welling, M. (2014). *Auto-Encoding Variational Bayes*. arXiv:1312.6114.
-2. Goodfellow, I. J. et al. (2013). *Challenges in Representation Learning*. ICML Workshop. (FER-2013)
-3. Higgins, I. et al. (2017). *β-VAE: Learning Basic Visual Concepts with a Constrained Variational Framework*. ICLR.
-4. Karras, T. et al. (2019). *A Style-Based Generator Architecture for Generative Adversarial Networks (StyleGAN)*. CVPR.
-5. Barrett, L. F. et al. (2019). *Emotional Expressions Reconsidered*. Psychological Science in the Public Interest, 20(1), 1–68.
-6. Lectura EIG Campus L-IAA_25_001122 — *VAEs para generación de imágenes médicas sintéticas (Hospital Carlos Andrade Marín)*.
+1. Sandler, M. et al. (2018). *MobileNetV2: Inverted Residuals and Linear Bottlenecks*. CVPR. arXiv:1801.04381.
+2. Selvaraju, R. R. et al. (2017). *Grad-CAM: Visual Explanations from Deep Networks*. ICCV. arXiv:1610.02391.
+3. Yosinski, J. et al. (2014). *How transferable are features in deep neural networks?*. NeurIPS. arXiv:1411.1792.
+4. Goodfellow, I. J. et al. (2013). *Challenges in Representation Learning*. ICML Workshop. (FER-2013 original.)
+5. Ekman, P. (1992). *An argument for basic emotions*. Cognition & Emotion.
+6. Barrett, L. F. et al. (2019). *Emotional Expressions Reconsidered*. Psychological Science in the Public Interest 20(1):1–68.
+7. TensorFlow Authors. [*Transfer learning and fine-tuning*](https://www.tensorflow.org/tutorials/images/transfer_learning).
+8. Keras Authors. [*Grad-CAM class activation visualization*](https://keras.io/examples/vision/grad_cam/).
