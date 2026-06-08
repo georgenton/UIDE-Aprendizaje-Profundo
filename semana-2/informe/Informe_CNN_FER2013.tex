@@ -317,6 +317,19 @@ Lejos de invalidar el experimento, este resultado lo refuerza: el feedback de la
 \end{enumerate}
 
 % =========================================================
+%  CIERRE DEL FEEDBACK PROFESORAL
+% =========================================================
+\section{Cierre del feedback profesoral (40/40)}
+
+\textit{Sección añadida en la entrega final del cuatrimestre para documentar cómo el feedback sobre esta práctica se aplicó en Semana 3.}
+
+\paragraph{Comentario del docente.} \textit{``Felicitaciones la práctica ha estado muy bien desarrollada y explicada. (\ldots) Yo quitaría de la red las capas de MaxPooling basado en que la imagen es 48$\times$48$\times$1 (poca información); el objetivo principal del pooling es reducir computación pero aquí quizás esté quitando características importantes. (\ldots) Esta semana podrían expandir más la exploración con fine tuning y redes más grandes con regularización adecuada para ver el comportamiento.''}
+
+\paragraph{Acciones aplicadas en Semana 3.} (i) El backbone elegido, \textbf{MobileNetV2}, \textit{no usa MaxPooling} por diseño — emplea \texttt{Conv2D(stride=2)} para el downsampling. Adicionalmente las imágenes se redimensionaron a 96$\times$96 RGB. (ii) Toda Semana 3 es una respuesta directa a la segunda sugerencia: backbone de 88 capas (3$\times$ la profundidad de la CNN actual) entrenado en dos fases con LR diferenciado 1\,000$\times$ (\texttt{1e-3} en Feature Extraction y \texttt{1e-5} en Fine-Tuning). El delta interno entre fases fue $+3{,}07$\,pp F1, validando empíricamente la estrategia. (iii) Sobre el desbalance: en Semana 3 se evitó deliberadamente reintroducir \texttt{class\_weight} tras el hallazgo de esta práctica.
+
+\paragraph{Hallazgo cruzado con Semana 3.} Sorprendentemente, el Transfer Learning con MobileNetV2/ImageNet \textbf{no superó} a la mejor variante de esta semana (F1\,=\,0,3814 vs 0,5032). El análisis interno mostró que el fine-tuning sí añadió valor pero el techo del backbone es bajo por mismatch de dominio (ImageNet objetos naturales vs FER-2013 rostros 48$\times$48 grayscale). La intuición del docente sobre el MaxPooling se confirmó válida, pero el cuello de botella efectivo está en otro lado (backbone genérico). Esto refuerza el patrón observado en Semana 1: las técnicas sofisticadas requieren calibración al problema, no se asumen.
+
+% =========================================================
 %  Referencias breves (estilo del informe Semana 1: en línea)
 % =========================================================
 \paragraph{Referencias.}
