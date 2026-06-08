@@ -1,0 +1,68 @@
+% =============================================================
+%  INFORME FINAL INDIVIDUAL — MIA-B Aprendizaje Profundo (UIDE)
+%  Jorge Quizamánchuro Fuel — Junio 2026
+%
+%  Parte 2 del informe final: descripción de la arquitectura
+%  seleccionada en no más de 500 palabras.
+%  Arquitectura elegida: CNN sobre FER-2013 (Semana 2 — 40/40).
+% =============================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-tabla]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[a4paper,top=1.8cm,bottom=1.8cm,left=2.2cm,right=2.2cm,headheight=14pt,headsep=8pt,footskip=20pt]{geometry}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{accent}{HTML}{1F4D8C}
+
+\titleformat{\section}{\normalfont\large\bfseries\sffamily\color{accent}}{\thesection.}{0.5em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\footnotesize\sffamily MIA-B $\,|\,$ Aprendizaje Profundo $\,|\,$ Informe Final Individual}
+\fancyhead[R]{\footnotesize\sffamily Junio, 2026}
+\fancyfoot[C]{\footnotesize\sffamily \thepage}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.35\baselineskip}
+\titlespacing*{\section}{0pt}{0.8\baselineskip}{0.3\baselineskip}
+
+\hypersetup{colorlinks=true, urlcolor=accent}
+
+\begin{document}
+
+\begin{center}
+{\Large\bfseries\sffamily\color{accent} Informe Final Individual --- Aprendizaje Profundo (59003)\par}
+\vspace{0.4em}
+{\large\bfseries Red Neuronal Convolucional para Reconocimiento de Expresiones Faciales (FER-2013)\par}
+\vspace{0.6em}
+{\normalsize Jorge Quizamánchuro Fuel \quad | \quad MIA-B \quad | \quad Universidad Internacional del Ecuador\par}
+{\footnotesize Docente: Ing.\ Jefferson David Rodríguez Chivata \quad | \quad Junio, 2026\par}
+\end{center}
+
+\rule{\textwidth}{0.4pt}
+
+\section{Descripción del dataset y del problema}
+
+El reconocimiento automático de expresiones faciales es relevante para plataformas de psicoeducación y monitoreo de bienestar emocional —contextos que motivan \emph{Psico Platform}, mi línea de aplicación profesional. Como caso académico utilizo \textbf{FER-2013} (Goodfellow et al., 2013): 35.887 imágenes de rostros en escala de grises a 48$\times$48 píxeles, etiquetadas en siete expresiones (\texttt{angry, disgust, fear, happy, neutral, sad, surprise}). El conjunto presenta un \textbf{desbalance fuerte}: \texttt{happy} reúne 7.215 imágenes de entrenamiento frente a \texttt{disgust} con apenas 436 (razón 16{,}5:1), lo que vuelve inadecuada la \emph{accuracy} y obliga a priorizar F1-macro.
+
+\section{Metodología}
+
+Implementé una \textbf{CNN desde cero} con dos bloques convolucionales (Conv2D 32 y 64, kernel 3$\times$3, ReLU), \texttt{Flatten}, una densa de 128 y \texttt{softmax} de 7 unidades. Centralicé el diseño en una función \texttt{build\_cnn(...)} con \emph{flags} para activar BatchNormalization, Dropout y aumentación; esto garantiza que las tres variantes evaluadas \mbox{(\textbf{A}-Baseline, \textbf{B}-Regularizada, \textbf{C}-Aumentada)} compartan topología y cualquier diferencia sea atribuible al cambio activado. El pre-procesamiento mantuvo la resolución nativa 48$\times$48 grayscale con \texttt{Rescaling(1/255)} embebido en el modelo. Los splits siguieron 85\,\%/15\,\% sobre \texttt{train} (semilla 42) reservando \texttt{test} como caja cerrada. Usé \texttt{sparse\_categorical\_crossentropy} sobre etiquetas enteras —evitando el OHE manual en línea con el feedback de la Semana 1—, optimizador Adam (\texttt{lr=1e-3}), batch 64, máximo 25 épocas con \texttt{EarlyStopping(patience=5)} y \texttt{ReduceLROnPlateau}. Tras una primera iteración con Dropout 0{,}5 y \texttt{class\_weight} que produjo \emph{underfitting} catastrófico, calibré la variante B con Dropout 0{,}20/0{,}30 sin \texttt{class\_weight}: decisión empírica que reflejó la lección recurrente del cuatrimestre —los hiperparámetros de regularización se calibran al problema, no se asumen—.
+
+\section{Resultados y análisis}
+
+La variante \textbf{B} alcanzó el mejor F1-macro sobre \emph{test}: \textbf{0{,}5032} (Accuracy 0{,}5415), superando al \emph{baseline} A (F1 = 0{,}4292) en \textbf{+7{,}4 puntos porcentuales}. La variante C, que añadía aumentación sobre B, retrocedió a F1 = 0{,}2920 —evidenciando que apilar defensas sobre una red pequeña ($\approx$1{,}2\,M parámetros) deriva en \emph{underfitting} antes que en mejor generalización. El patrón observado A $<$ B $>$ C contradice la hipótesis monotónica de partida y, junto al hallazgo análogo de Semana 1 con L2, consolidó un principio metodológico que estructuró el resto del cuatrimestre. El análisis por clase identificó \texttt{disgust} como el cuello de botella (recall 0{,}42), confirmando que el desbalance es el techo real del modelo —la siguiente iteración debería atacarlo con un \emph{backbone} más rico o con datos sintéticos balanceados, no con más regularización.
+
+\rule{\textwidth}{0.4pt}
+{\footnotesize\textit{Repositorio público: \href{https://github.com/georgenton/UIDE-Aprendizaje-Profundo}{github.com/georgenton/UIDE-Aprendizaje-Profundo} --- carpeta \texttt{semana-2/} para notebook completo, informe técnico y outputs.}\par}
+
+\end{document}
